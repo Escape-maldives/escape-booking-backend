@@ -1,7 +1,7 @@
-const express = require("express");
-const fs = require("fs");
-const path = require("path");
-const cors = require("cors");
+const express = require('express');
+const cors = require('cors');
+const { Pool } = require('pg');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,65 +9,42 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-const BOOKINGS_FILE = path.join(__dirname, "bookings.json");
-
-// Buchungen lesen
-function readBookings() {
-  if (!fs.existsSync(BOOKINGS_FILE)) return [];
-  return JSON.parse(fs.readFileSync(BOOKINGS_FILE, "utf8"));
-}
-
-// Buchungen schreiben
-function writeBookings(data) {
-  fs.writeFileSync(BOOKINGS_FILE, JSON.stringify(data, null, 2));
-}
-
-// ✉️ Neue Buchung empfangen
-app.post("/api/bookings", (req, res) => {
-  const data = req.body;
-
-  if (!data.name || !data.departureDate || !data.departureTime || !data.route || !data.pax) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
-
-  const bookings = readBookings();
-  bookings.push(data);
-  writeBookings(bookings);
-
-  res.status(201).json({ message: "Booking saved successfully" });
+// PostgreSQL config via Railway environment variable
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
 
-// 📅 Verfügbarkeit prüfen
-app.get("/availability", (req, res) => {
-  const { route, date, time } = req.query;
+// POST /api/bookings
+app.post('/api/bookings', async (req, res) => {
+  const { name, route, departureDate, departureTime, pax } = req.body;
 
-  if (!route || !date || !time) {
-    return res.status(400).json({ error: "Missing query parameters" });
+  if (!name || !route || !departureDate || !departureTime || !pax) {
+    return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  // Dummy-Logik zur Verfügbarkeit
-  const maxCapacity = 12;
-  const bookings = readBookings();
+  try {
+    const query = `
+      INSERT INTO bookings (name, route, departure_date, departure_time, pax)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *;
+    `;
+    const values = [name, route, departureDate, departureTime, pax];
 
-  const paxBooked = bookings
-    .filter(b =>
-      b.route === route &&
-      b.departureDate === date &&
-      b.departureTime === time
-    )
-    .reduce((total, b) => total + parseInt(b.pax), 0);
+    const result = await pool.query(query, values);
+    res.status(201).json({ message: 'Booking saved', booking: result.rows[0] });
+  } catch (error) {
+    console.error('Error saving booking:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
-  const available = maxCapacity - paxBooked;
-
-  res.json({
-    route,
-    date,
-    time,
-    paxBooked,
-    paxAvailable: available > 0 ? available : 0
-  });
+app.get('/', (req, res) => {
+  res.send('Escape Booking Backend is running!');
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
