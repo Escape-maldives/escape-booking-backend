@@ -1,80 +1,71 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
-const nodemailer = require("nodemailer");
 const cors = require("cors");
-require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json());
 
 const BOOKINGS_FILE = path.join(__dirname, "bookings.json");
 
+// Buchungen lesen
 function readBookings() {
   if (!fs.existsSync(BOOKINGS_FILE)) return [];
   return JSON.parse(fs.readFileSync(BOOKINGS_FILE, "utf8"));
 }
 
+// Buchungen schreiben
 function writeBookings(data) {
   fs.writeFileSync(BOOKINGS_FILE, JSON.stringify(data, null, 2));
 }
 
+// ✉️ Neue Buchung empfangen
 app.post("/api/bookings", (req, res) => {
   const data = req.body;
 
-  if (!data.name || !data.email || !data.departureDate || !data.departureTime || !data.route || !data.pax) {
+  if (!data.name || !data.departureDate || !data.departureTime || !data.route || !data.pax) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
   const bookings = readBookings();
-
-  const filtered = bookings.filter(b =>
-    b.route === data.route &&
-    b.departureDate === data.departureDate &&
-    b.departureTime === data.departureTime
-  );
-
-  const totalPax = filtered.reduce((sum, b) => sum + b.pax, 0);
-
-  if (totalPax + data.pax > 28) {
-    return res.status(400).json({ error: "Not enough seats available" });
-  }
-
-  const newBooking = { ...data, status: "pending", id: Date.now() };
-  bookings.push(newBooking);
+  bookings.push(data);
   writeBookings(bookings);
 
-  // Send email to admin
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.ADMIN_EMAIL,
-      pass: process.env.ADMIN_PASS
-    }
+  res.status(201).json({ message: "Booking saved successfully" });
+});
+
+// 📅 Verfügbarkeit prüfen
+app.get("/availability", (req, res) => {
+  const { route, date, time } = req.query;
+
+  if (!route || !date || !time) {
+    return res.status(400).json({ error: "Missing query parameters" });
+  }
+
+  // Dummy-Logik zur Verfügbarkeit
+  const maxCapacity = 12;
+  const bookings = readBookings();
+
+  const paxBooked = bookings
+    .filter(b =>
+      b.route === route &&
+      b.departureDate === date &&
+      b.departureTime === time
+    )
+    .reduce((total, b) => total + parseInt(b.pax), 0);
+
+  const available = maxCapacity - paxBooked;
+
+  res.json({
+    route,
+    date,
+    time,
+    paxBooked,
+    paxAvailable: available > 0 ? available : 0
   });
-
-  const mailOptions = {
-    from: process.env.ADMIN_EMAIL,
-    to: process.env.ADMIN_EMAIL,
-    subject: "New Speedboat Booking Request",
-    html: `<h3>New Booking:</h3>
-           <p><b>Name:</b> ${data.name}</p>
-           <p><b>Email:</b> ${data.email}</p>
-           <p><b>Route:</b> ${data.route}</p>
-           <p><b>Date:</b> ${data.departureDate}</p>
-           <p><b>Time:</b> ${data.departureTime}</p>
-           <p><b>Pax:</b> ${data.pax}</p>
-           <p><b>Total Price:</b> ${data.totalPrice}</p>`
-  };
-
-  transporter.sendMail(mailOptions, (error, info) => {
-    if (error) console.error("Email error:", error);
-    else console.log("Email sent:", info.response);
-  });
-
-  res.json({ success: true, booking: newBooking });
 });
 
 app.listen(PORT, () => {
