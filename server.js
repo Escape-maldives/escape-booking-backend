@@ -9,15 +9,20 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// PostgreSQL config via Railway environment variable
+// PostgreSQL connection using environment variable
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false,
-  },
+    rejectUnauthorized: false // Required for Railway hosted PostgreSQL
+  }
 });
 
-// POST /api/bookings
+// Health check route
+app.get('/', (req, res) => {
+  res.send('Escape Speedboat Booking API is running');
+});
+
+// POST: Create new booking
 app.post('/api/bookings', async (req, res) => {
   const { name, route, departureDate, departureTime, pax } = req.body;
 
@@ -26,25 +31,30 @@ app.post('/api/bookings', async (req, res) => {
   }
 
   try {
-    const query = `
-      INSERT INTO bookings (name, route, departure_date, departure_time, pax)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING *;
-    `;
-    const values = [name, route, departureDate, departureTime, pax];
+    const result = await pool.query(
+      'INSERT INTO bookings (name, route, departure_date, departure_time, pax) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [name, route, departureDate, departureTime, pax]
+    );
 
-    const result = await pool.query(query, values);
-    res.status(201).json({ message: 'Booking saved', booking: result.rows[0] });
-  } catch (error) {
-    console.error('Error saving booking:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(201).json({ success: true, booking: result.rows[0] });
+  } catch (err) {
+    console.error('Error saving booking:', err.message);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.get('/', (req, res) => {
-  res.send('Escape Booking Backend is running!');
+// GET: All bookings (optional testing route)
+app.get('/api/bookings', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM bookings ORDER BY id DESC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch bookings' });
+  }
 });
 
+// Start server
 app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
